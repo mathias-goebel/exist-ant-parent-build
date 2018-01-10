@@ -1,0 +1,4 @@
+build/
+lib/
+ivy/
+git.branches

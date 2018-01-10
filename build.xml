@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project basedir="." name="parent" default="build" xmlns:ivy="antlib:org.apache.ivy.ant"
+    xmlns:git="antlib:com.rimerosolutions.ant.git">
+
+    <description> exist build parent task </description>
+
+    <property file="build.properties" />
+    <property name="ivy.jardir" value="${basedir}/lib"/>
+    <tstamp>
+        <format property="timestamp" pattern="yyyyMMddHHmmss" unit="hour"/>
+    </tstamp>
+
+
+    <target name="build" depends="exist-build"/>
+
+    <target name="exist-git" depends="ant-dependencies">
+        <git repo="${exist.git}" branch="tags/${exist.tag}" dest="${exist.dest}"/>
+    </target>
+
+    <target name="exist-build-conf" depends="exist-git">
+        <echo message="configuring eXist"/>
+        <copy file="${exist.dest}/build.properties" tofile="${exist.dest}/local.build.properties" />
+    </target>
+    <target name="exist-build" depends="exist-build-conf">
+        <java classname="org.apache.tools.ant.launch.Launcher" fork="true">
+            <arg value="-Dant.home=${exist.dest}/tools/ant"/>
+            <arg value="-Dant.library.dir=${exist.dest}/tools/ant/lib"/>
+            <arg value="-Divy.default.ivy.user.dir=${basedir}/ivy"/>
+            <arg
+                value="-Djavax.xml.transform.TransformerFactory=org.apache.xalan.processor.TransformerFactoryImpl"/>
+            <arg value="-f"/>
+            <arg value="${exist.dest}/build.xml"/>
+            <arg value="all"/>
+            <arg value="dist"/>
+            <classpath>
+                <pathelement location="${exist.dest}/tools/ant/lib/ant-launcher-1.10.1.jar"/>
+                <!--pathelement path="${java.class.path}"/-->
+            </classpath>
+        </java>
+    </target>
+
+
+    <!-- ************************************* -->
+    <!-- * ALL DEPENDENCIES BELOW THIS LINE! * -->
+    <!-- ************************************* -->
+    <target name="ant-dependencies" depends="install-ivy">
+        <property name="ivy.default.ivy.user.dir" value="${basedir}/ivy"/>
+        <ivy:retrieve conf="tasks"/>
+        <path id="classpath">
+            <fileset dir="./lib">
+                <include name="*.jar"/>
+            </fileset>
+        </path>
+        <!-- git -->
+        <taskdef uri="antlib:com.rimerosolutions.ant.git"
+            resource="com/rimerosolutions/ant/git/jgit-ant-lib.xml" classpathref="classpath"/>
+        <!-- contrib has if -->
+        <taskdef resource="net/sf/antcontrib/antcontrib.properties" classpathref="classpath"/>
+        <!-- jdeb -->
+        <taskdef name="deb" classname="org.vafer.jdeb.ant.DebAntTask" classpathref="classpath"/>
+    </target>
+
+    <target name="download-ivy" unless="skip.download">
+        <mkdir dir="${ivy.jardir}"/>
+        <get
+            src="http://repo1.maven.org/maven2/org/apache/ivy/ivy/${ivy.version}/ivy-${ivy.version}.jar"
+            dest="${ivy.jarfile}" usetimestamp="true"/>
+    </target>
+
+    <target name="install-ivy" depends="download-ivy" description="installs ivy">
+        <path id="ivy.lib.path">
+            <pathelement location="${ivy.jarfile}"/>
+        </path>
+        <taskdef resource="org/apache/ivy/ant/antlib.xml" uri="antlib:org.apache.ivy.ant"
+            classpathref="ivy.lib.path"/>
+    </target>
+
+    <macrodef name="git">
+        <attribute name="repo"/>
+        <attribute name="branch"/>
+        <attribute name="dest"/>
+        <sequential>
+            <if>
+                <available file="@{dest}" type="dir"/>
+                <then>
+                    <echo message="updating @{dest} from @{repo}"/>
+                    <if>
+                      <matches string="@{branch}" pattern="^tags/.*" />
+                      <then>
+                          <echo message="checking out tag: @{branch}"/>
+                          <git:git directory="@{dest}" verbose="false">
+                              <git:fetch uri="@{repo}" />
+                              <git:checkout branchname="@{branch}" failonerror="true"/>
+                          </git:git>
+                      </then>
+                      <else>
+                          <echo message="pulling from branch: @{branch}"/>
+                          <git-branch-checkout-pull repo="@{repo}" branch="@{branch}" dest="@{dest}"/>
+                      </else>
+                    </if>
+                </then>
+                <else>
+                    <if>
+                        <matches string="@{branch}" pattern="^tags/.*" />
+                        <then>
+                            <echo message="cloning @{repo} and checkout tag"/>
+                            <git:git directory="@{dest}" verbose="false">
+                                <git:clone uri="@{repo}"/>
+                                <git:checkout branchname="@{branch}"/>
+                            </git:git>
+                        </then>
+                        <else>
+                            <echo message="cloning @{repo} to @{dest}"/>
+                            <git:git directory="@{dest}" verbose="false">
+                                <git:clone uri="@{repo}" branchtotrack="@{branch}"/>
+                            </git:git>
+                        </else>
+                    </if>
+                </else>
+            </if>
+        </sequential>
+    </macrodef>
+
+    <!-- the git:checkout task does not so well in checkount and setting new remote
+         tracking branches, the following task is a workaround -->
+    <macrodef name="git-branch-checkout-pull">
+        <attribute name="repo"/>
+        <attribute name="branch"/>
+        <attribute name="dest"/>
+        <sequential>
+
+          <git:git directory="@{dest}" verbose="false">
+              <git:fetch uri="@{repo}" />
+              <git:branchlist outputfilename="@{dest}/git.branches"/>
+          </git:git>
+
+          <loadfile property="localBranchLine" srcfile="@{dest}/git.branches">
+              <filterchain>
+                  <linecontains>
+                      <contains value="* @{branch}"></contains>
+                  </linecontains>
+              </filterchain>
+          </loadfile>
+
+          <if>
+              <isset property="localBranchLine"/>
+              <then>
+                  <git:git directory="@{dest}" verbose="false">
+                      <git:checkout branchname="@{branch}" failonerror="true" />
+                      <git:pull uri="@{repo}" />
+                  </git:git>
+              </then>
+              <else>
+                  <echo message="no local branch existing yet, create and set remote tracking"/>
+                  <git:git directory="@{dest}" verbose="false">
+                      <git:checkout branchname="@{branch}" failonerror="true" createbranch="true" startpoint="@{branch}" />
+                  </git:git>
+                  <echo file="@{dest}/.git/config" append="true">
+                  [branch "@{branch}"]
+                          remote = origin
+                          merge = refs/heads/@{branch}
+                  </echo>
+                  <git:git directory="@{dest}" verbose="false">
+                      <git:pull uri="@{repo}" />
+                  </git:git>
+              </else>
+          </if>
+
+        </sequential>
+    </macrodef>
+
+</project>

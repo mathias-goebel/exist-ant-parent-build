@@ -1,4 +1,4 @@
-# eXist-ant-buid bug
+# eXist-ant-build bug
 This repo contains the ant build scripts to reproduce a build error when using
 a parent task.
 
